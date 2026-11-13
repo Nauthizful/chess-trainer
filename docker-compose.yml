@@ -1,0 +1,7 @@
+services:
+  chess-opening-trainer:
+    build: .
+    container_name: chess-opening-trainer
+    ports:
+      - "8080:80"
+    restart: unless-stopped

@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/board.tsx","./src/components/chesspiecesvg.tsx","./src/components/movehistory.tsx","./src/components/openingselector.tsx","./src/components/statspanel.tsx","./src/data/openings.ts","./src/services/lichessapi.ts","./src/store/usechessstore.ts","./src/types/chess.ts","./src/types/index.ts"],"version":"5.6.3"}
