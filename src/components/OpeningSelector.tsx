@@ -39,9 +39,14 @@ export const OpeningSelector: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'Toutes' | OpeningCategory>('Toutes');
 
+  const availableOpenings = useMemo(
+    () => OPENINGS.filter((opening) => opening.playedBy !== playerColor),
+    [playerColor]
+  );
+
   const filteredOpenings = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return OPENINGS.filter((opening) => {
+    return availableOpenings.filter((opening) => {
       if (selectedCategory !== 'Toutes' && opening.category !== selectedCategory) {
         return false;
       }
@@ -53,7 +58,7 @@ export const OpeningSelector: React.FC = () => {
         opening.moves.slice(0, 4).join(' ').toLowerCase().includes(q)
       );
     });
-  }, [searchQuery, selectedCategory]);
+  }, [availableOpenings, searchQuery, selectedCategory]);
 
   const handleSelectOpening = (opening: Opening) => {
     setSelectedOpening(opening);
@@ -112,7 +117,9 @@ export const OpeningSelector: React.FC = () => {
             <BookOpen className="w-3.5 h-3.5 text-amber-400" />
             Ouverture cible de l’adversaire
           </span>
-          <span className="text-[11px] text-slate-500">{OPENINGS.length} lignes</span>
+          <span className="text-[11px] text-slate-500">
+            {availableOpenings.length} lignes ({playerColor === 'w' ? 'Noirs' : 'Blancs'})
+          </span>
         </div>
 
         <button
@@ -184,35 +191,42 @@ export const OpeningSelector: React.FC = () => {
                   Aucune ouverture ne correspond à votre recherche.
                 </div>
               ) : (
-                filteredOpenings.map((opening) => {
-                  const isActive = opening.id === selectedOpening.id;
-                  return (
-                    <button
-                      key={opening.id}
-                      type="button"
-                      onClick={() => handleSelectOpening(opening)}
-                      className={`w-full text-left px-3 py-2.5 transition-colors hover:bg-slate-800/80 ${
-                        isActive ? 'bg-emerald-500/10' : ''
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-800 text-amber-300 border border-slate-700">
-                          {opening.eco}
-                        </span>
-                        <span
-                          className={`text-xs font-semibold truncate ${
-                            isActive ? 'text-emerald-300' : 'text-slate-200'
-                          }`}
-                        >
-                          {opening.name}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-[11px] font-mono text-slate-400 truncate">
-                        {opening.pgn}
-                      </p>
-                    </button>
-                  );
-                })
+                <>
+                  {filteredOpenings.slice(0, 100).map((opening) => {
+                    const isActive = opening.id === selectedOpening.id;
+                    return (
+                      <button
+                        key={opening.id}
+                        type="button"
+                        onClick={() => handleSelectOpening(opening)}
+                        className={`w-full text-left px-3 py-2.5 transition-colors hover:bg-slate-800/80 ${
+                          isActive ? 'bg-emerald-500/10' : ''
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-800 text-amber-300 border border-slate-700">
+                            {opening.eco}
+                          </span>
+                          <span
+                            className={`text-xs font-semibold truncate ${
+                              isActive ? 'text-emerald-300' : 'text-slate-200'
+                            }`}
+                          >
+                            {opening.name}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] font-mono text-slate-400 truncate">
+                          {opening.pgn}
+                        </p>
+                      </button>
+                    );
+                  })}
+                  {filteredOpenings.length > 100 && (
+                    <div className="px-3 py-2 text-center text-[11px] text-slate-500 bg-slate-950/60">
+                      {filteredOpenings.length - 100} autres ouvertures — affinez votre recherche.
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

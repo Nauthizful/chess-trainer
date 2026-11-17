@@ -1,24 +1,37 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Chess } from 'chess.js';
-import { Bot, Crown, EyeOff, ShieldAlert, User } from 'lucide-react';
+import { BookMarked, Bot, Brain, Cpu, Crown, EyeOff, GitFork, GraduationCap, ShieldAlert, Swords, User } from 'lucide-react';
 import { Board } from './components/Board';
 import { OpeningSelector } from './components/OpeningSelector';
+import { QuizPanel } from './components/QuizPanel';
 import { MoveHistory } from './components/MoveHistory';
 import { StatsPanel } from './components/StatsPanel';
+import { HardwarePanel } from './components/HardwarePanel';
+import { ExplorerView } from './components/Explorer/ExplorerView';
+import { RepertoireView } from './components/Repertoire/RepertoireView';
+import { AnalysisView } from './components/Analysis/AnalysisView';
 import { useChessStore } from './store/useChessStore';
 
 export function App() {
   const {
     init,
+    activeTab,
+    setActiveTab,
+    trainingMode,
+    setTrainingMode,
     fen,
     turn,
     playerColor,
     selectedOpening,
     isBlindMode,
-    isOutOfBook,
+    isOutOfTargetLine,
     isComputerThinking,
     cacheCount,
+    driverStatus,
+    driverKind,
   } = useChessStore();
+
+  const [isHardwareOpen, setIsHardwareOpen] = useState(false);
 
   useEffect(() => {
     init();
@@ -30,7 +43,9 @@ export function App() {
   const isGameOver = chess.isGameOver();
 
   const opponentLabel =
-    playerColor === 'w'
+    trainingMode === 'quiz'
+      ? `Quiz Répertoire (${playerColor === 'w' ? 'Noirs' : 'Blancs'})`
+      : playerColor === 'w'
       ? `Ordinateur (Noirs • ${selectedOpening.eco})`
       : `Ordinateur (Blancs • ${selectedOpening.eco})`;
 
@@ -50,21 +65,76 @@ export function App() {
               <h1 className="text-sm sm:text-base font-bold tracking-tight text-white truncate">
                 Chess Opening Trainer
               </h1>
-              <p className="text-[11px] text-slate-400 hidden sm:block truncate">
-                Entraînement inversé aux ouvertures • Lichess Explorer & Docker
+              <p className="text-[11px] text-slate-400 hidden lg:block truncate">
+                Entraînement inversé • Lichess Explorer & ESP32
               </p>
             </div>
           </div>
 
+          {/* Primary Tab Navigation */}
+          <nav
+            aria-label="Navigation principale"
+            className="flex items-center p-1 rounded-xl bg-slate-950/80 border border-slate-800 shrink-0"
+          >
+            <button
+              type="button"
+              onClick={() => setActiveTab('training')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'training'
+                  ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <Swords className="w-3.5 h-3.5" />
+              <span>Entraînement</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('explorer')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'explorer'
+                  ? 'bg-blue-500/20 text-blue-200 border border-blue-500/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <GitFork className="w-3.5 h-3.5" />
+              <span>Explorateur & Arbre</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('repertoire')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'repertoire'
+                  ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <BookMarked className="w-3.5 h-3.5" />
+              <span>Mon Répertoire</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('analysis')}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeTab === 'analysis'
+                  ? 'bg-teal-500/20 text-teal-200 border border-teal-500/40 shadow-sm'
+                  : 'text-slate-400 hover:text-slate-200 border border-transparent'
+              }`}
+            >
+              <GraduationCap className="w-3.5 h-3.5" />
+              <span>Analyse de Partie</span>
+            </button>
+          </nav>
+
           <div className="flex items-center gap-2 shrink-0">
-            {isOutOfBook && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/40">
+            {isOutOfTargetLine && (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/40">
                 <ShieldAlert className="w-3.5 h-3.5" />
                 Hors ligne cible
               </span>
             )}
             {isBlindMode && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-200 border border-amber-500/40">
+              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-200 border border-amber-500/40">
                 <EyeOff className="w-3.5 h-3.5" />
                 Mode Aveugle
               </span>
@@ -72,16 +142,70 @@ export function App() {
             <span className="hidden md:inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
               Cache FEN : {cacheCount}
             </span>
+            <button
+              type="button"
+              onClick={() => setIsHardwareOpen(true)}
+              className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                driverStatus === 'connected'
+                  ? 'bg-emerald-500/15 text-emerald-200 border-emerald-500/50'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+              }`}
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              <span>Échiquier Connecté</span>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  driverStatus === 'connected'
+                    ? 'bg-emerald-400 animate-pulse'
+                    : driverKind !== 'none' && driverStatus === 'error'
+                    ? 'bg-rose-400'
+                    : 'bg-slate-500'
+                }`}
+              />
+            </button>
           </div>
         </div>
       </header>
 
-      {/* Main 3-Column Training Workspace */}
+      {/* Main Workspace */}
       <main className="flex-1 max-w-[1440px] w-full mx-auto px-4 sm:px-6 py-5">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-          {/* Left Column: Opening Configuration */}
-          <section className="lg:col-span-4 xl:col-span-3 order-2 lg:order-1">
-            <OpeningSelector />
+        {activeTab === 'explorer' ? (
+          <ExplorerView />
+        ) : activeTab === 'repertoire' ? (
+          <RepertoireView />
+        ) : activeTab === 'analysis' ? (
+          <AnalysisView />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          {/* Left Column: Opening Configuration or Quiz Panel */}
+          <section className="lg:col-span-4 xl:col-span-3 order-2 lg:order-1 space-y-3">
+            <div className="grid grid-cols-2 gap-1.5 p-1 rounded-xl bg-slate-900/90 border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setTrainingMode('opening')}
+                className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all ${
+                  trainingMode === 'opening'
+                    ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-500/40'
+                    : 'text-slate-400 hover:text-slate-200 border border-transparent'
+                }`}
+              >
+                <Swords className="w-3.5 h-3.5" />
+                Ouverture cible
+              </button>
+              <button
+                type="button"
+                onClick={() => setTrainingMode('quiz')}
+                className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-semibold transition-all ${
+                  trainingMode === 'quiz'
+                    ? 'bg-amber-500/20 text-amber-200 border border-amber-500/40'
+                    : 'text-slate-400 hover:text-slate-200 border border-transparent'
+                }`}
+              >
+                <Brain className="w-3.5 h-3.5" />
+                Quiz Répertoire
+              </button>
+            </div>
+            {trainingMode === 'quiz' ? <QuizPanel /> : <OpeningSelector />}
           </section>
 
           {/* Center Column: Interactive Chessboard + SVG Overlay */}
@@ -159,10 +283,16 @@ export function App() {
           {/* Right Column: Time-Travel Move History & Stats Panel */}
           <section className="lg:col-span-12 xl:col-span-4 order-3 space-y-5">
             <MoveHistory />
-            <StatsPanel />
+            {trainingMode === 'opening' && <StatsPanel />}
           </section>
-        </div>
+          </div>
+        )}
       </main>
+
+      <HardwarePanel
+        isOpen={isHardwareOpen}
+        onClose={() => setIsHardwareOpen(false)}
+      />
     </div>
   );
 }

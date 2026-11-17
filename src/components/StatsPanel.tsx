@@ -1,14 +1,19 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
   BarChart3,
   CheckCircle2,
   Compass,
   EyeOff,
+  GitBranch,
+  KeyRound,
   Loader2,
+  Play,
   Sparkles,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
-import { useChessStore } from '../store/useChessStore';
+import { findRefugeOpenings, useChessStore } from '../store/useChessStore';
 import { getTotalGames } from '../services/lichessApi';
 
 function formatCompactNumber(num: number): string {
@@ -20,24 +25,46 @@ function formatCompactNumber(num: number): string {
 export const StatsPanel: React.FC = () => {
   const {
     selectedOpening,
+    history,
     currentPly,
     turn,
     playerColor,
     databaseSource,
     isBlindMode,
-    isOutOfBook,
+    isOutOfTargetLine,
+    isFreeExploreMode,
     isBookCompleted,
     expectedBookMoveSan,
     lastMoveDeviation,
+    lichessToken,
+    lichessStatus,
     explorerStats,
     isLoadingStats,
     statsError,
     isComputerThinking,
     makeSanMove,
+    setLichessToken,
+    switchToRefugeOpening,
+    continueWithPopularMoves,
   } = useChessStore();
 
+  const [tokenDraft, setTokenDraft] = useState(lichessToken);
+  const [showTokenInput, setShowTokenInput] = useState(
+    lichessStatus === 'auth_error'
+  );
+
+  const refugeOpenings = useMemo(() => {
+    if (!isOutOfTargetLine) return [];
+    return findRefugeOpenings(
+      history,
+      currentPly,
+      playerColor,
+      selectedOpening.id
+    );
+  }, [isOutOfTargetLine, history, currentPly, playerColor, selectedOpening.id]);
+
   const totalBookMoves = selectedOpening.moves.length;
-  const completedBookPlies = isOutOfBook
+  const completedBookPlies = isOutOfTargetLine
     ? Math.max(0, (lastMoveDeviation?.ply ?? 1) - 1)
     : Math.min(currentPly, totalBookMoves);
   const progressPct =
@@ -49,20 +76,49 @@ export const StatsPanel: React.FC = () => {
   const canPlayFromStats =
     !isBlindMode && turn === playerColor && !isComputerThinking;
 
+  const statusBadge = (() => {
+    switch (lichessStatus) {
+      case 'connected':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/40">
+            <Wifi className="w-3 h-3" />
+            Connecté
+          </span>
+        );
+      case 'auth_error':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/40">
+            <KeyRound className="w-3 h-3" />
+            Erreur 401/429 - Token requis
+          </span>
+        );
+      case 'offline':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/40">
+            <WifiOff className="w-3 h-3" />
+            Hors-ligne
+          </span>
+        );
+      default:
+        return null;
+    }
+  })();
+
   return (
     <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-4">
       {/* Status Banner */}
-      {isOutOfBook ? (
-        <div className="rounded-xl p-3 bg-amber-500/10 border border-amber-500/40 space-y-1.5">
+      {isOutOfTargetLine && !isFreeExploreMode ? (
+        <div className="rounded-xl p-3.5 bg-amber-500/10 border border-amber-500/40 space-y-3">
           <div className="flex items-center justify-between gap-2">
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
               <AlertTriangle className="w-3.5 h-3.5" />
               Hors ligne cible
             </span>
             <span className="text-[11px] text-amber-200/80 font-medium">
-              Relais Lichess actif
+              Ordinateur en pause
             </span>
           </div>
+
           <p className="text-xs text-slate-300 leading-relaxed">
             {lastMoveDeviation && !isBlindMode ? (
               <>
@@ -74,11 +130,65 @@ export const StatsPanel: React.FC = () => {
                 <span className="font-mono font-bold text-emerald-300">
                   {lastMoveDeviation.expectedSan}
                 </span>
-                ). L’adversaire répond maintenant avec les coups réels les plus populaires sur Lichess.
+                ). Choisissez comment poursuivre :
               </>
             ) : (
-              'Vous avez dévié de la ligne cible. L’adversaire continue de façon réaliste via l’API Lichess.'
+              'Vous avez dévié de la ligne cible. Choisissez une ligne de refuge ou continuez en exploration libre :'
             )}
+          </p>
+
+          {/* Refuge Openings */}
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-200/90 flex items-center gap-1.5">
+              <GitBranch className="w-3.5 h-3.5" />
+              Changer de ligne (Refuges)
+            </p>
+            {refugeOpenings.length === 0 ? (
+              <p className="text-[11px] text-slate-400 italic">
+                Aucune ouverture du catalogue ne correspond à cette séquence exacte.
+              </p>
+            ) : (
+              <div className="max-h-36 overflow-y-auto space-y-1 pr-0.5">
+                {refugeOpenings.map((opening) => (
+                  <button
+                    key={opening.id}
+                    type="button"
+                    onClick={() => switchToRefugeOpening(opening)}
+                    className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-900/90 hover:bg-emerald-500/15 border border-slate-700 hover:border-emerald-500/50 transition-colors flex items-center gap-2"
+                  >
+                    <span className="px-1.5 py-0.5 text-[10px] font-mono font-bold rounded bg-slate-800 text-amber-300 border border-slate-700 shrink-0">
+                      {opening.eco}
+                    </span>
+                    <span className="text-xs font-medium text-slate-200 truncate">
+                      {opening.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Continue with popular Lichess moves */}
+          <button
+            type="button"
+            onClick={continueWithPopularMoves}
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 border border-blue-500/40 transition-colors"
+          >
+            <Play className="w-3.5 h-3.5" />
+            Continuer via coups populaires
+          </button>
+        </div>
+      ) : isFreeExploreMode ? (
+        <div className="rounded-xl p-3 bg-blue-500/10 border border-blue-500/40 space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+              <Compass className="w-3.5 h-3.5" />
+              Exploration libre
+            </span>
+            <span className="text-[11px] text-blue-200/80">Lichess Explorer</span>
+          </div>
+          <p className="text-xs text-slate-300 leading-relaxed">
+            L’ordinateur répond avec les coups les plus populaires sur Lichess.
           </p>
         </div>
       ) : isBookCompleted ? (
@@ -133,18 +243,61 @@ export const StatsPanel: React.FC = () => {
         </div>
       )}
 
-      {/* Lichess Explorer Stats */}
+      {/* Lichess Explorer Stats & Connection Status */}
       <div>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
             <BarChart3 className="w-3.5 h-3.5 text-blue-400" />
-            Explorateur Lichess (
-            {databaseSource === 'masters' ? 'Maîtres' : '1000–1400 Elo'})
+            Lichess ({databaseSource === 'masters' ? 'Maîtres' : '1000–1400'})
           </h3>
-          {isLoadingStats && (
-            <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
-          )}
+          <div className="flex items-center gap-1.5">
+            {isLoadingStats && (
+              <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+            )}
+            {statusBadge}
+            <button
+              type="button"
+              onClick={() => setShowTokenInput((v) => !v)}
+              title="Configurer le Token API Lichess"
+              className={`p-1 rounded-md border transition-colors ${
+                lichessToken
+                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <KeyRound className="w-3 h-3" />
+            </button>
+          </div>
         </div>
+
+        {(showTokenInput || lichessStatus === 'auth_error') && (
+          <div className="mb-3 p-2.5 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2">
+            <label className="block text-[11px] font-semibold text-slate-300">
+              Token API Lichess (optionnel)
+            </label>
+            <div className="flex gap-1.5">
+              <input
+                type="password"
+                value={tokenDraft}
+                onChange={(e) => setTokenDraft(e.target.value)}
+                placeholder="lip_xxxxxxxxxxxxxxxx..."
+                className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-slate-900 border border-slate-700 rounded-lg text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={() => setLichessToken(tokenDraft)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 border border-blue-500/40 transition-colors shrink-0"
+              >
+                Enregistrer
+              </button>
+            </div>
+            <p className="text-[10px] text-slate-500 leading-snug">
+              Stocké localement (<code className="text-slate-400">localStorage</code>) et envoyé en en-tête{' '}
+              <code className="text-slate-400">Authorization: Bearer</code> vers{' '}
+              <code className="text-slate-400">explorer.lichess.org</code>.
+            </p>
+          </div>
+        )}
 
         {explorerStats?.opening && (
           <div className="mb-2.5 px-2.5 py-1.5 rounded-lg bg-slate-950/60 border border-slate-800 flex items-center gap-2 text-xs">
@@ -185,7 +338,7 @@ export const StatsPanel: React.FC = () => {
               <span>{formatCompactNumber(totalPositionGames)} parties</span>
             </div>
 
-            <div className="divide-y divide-slate-800/70 max-h-64 overflow-y-auto">
+            <div className="divide-y divide-slate-800/70 max-h-60 overflow-y-auto">
               {explorerStats.moves.slice(0, 8).map((move) => {
                 const moveTotal = getTotalGames(move);
                 if (moveTotal === 0) return null;
@@ -197,7 +350,9 @@ export const StatsPanel: React.FC = () => {
                 const drawPct = (move.draws / moveTotal) * 100;
                 const blackPct = (move.black / moveTotal) * 100;
                 const isExpected =
-                  !isOutOfBook && expectedBookMoveSan === move.san;
+                  !isOutOfTargetLine &&
+                  !isFreeExploreMode &&
+                  expectedBookMoveSan === move.san;
 
                 return (
                   <button
@@ -238,7 +393,6 @@ export const StatsPanel: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Win / Draw / Loss stacked bar */}
                     <div className="w-full h-2 rounded-full overflow-hidden flex bg-slate-800 ring-1 ring-slate-700/60">
                       <div
                         style={{ width: `${whitePct}%` }}

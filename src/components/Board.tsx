@@ -38,10 +38,14 @@ export const Board: React.FC = () => {
     history,
     currentPly,
     isBlindMode,
-    isOutOfBook,
+    isOutOfTargetLine,
     expectedBookMoveUci,
     explorerStats,
     isComputerThinking,
+    trainingMode,
+    quizStatus,
+    quizShowSolution,
+    quizExpectedMove,
     makeUserMove,
   } = useChessStore();
 
@@ -89,8 +93,27 @@ export const Board: React.FC = () => {
     return null;
   }, [chess, boardMatrix]);
 
+  const isBotTurnOrThinking =
+    chess.turn() !== playerColor || turn !== playerColor || isComputerThinking;
+
   const arrows: BoardArrow[] = useMemo(() => {
-    if (isBlindMode) return [];
+    if (trainingMode === 'quiz') {
+      if (quizStatus === 'wrong' && quizShowSolution && quizExpectedMove) {
+        return [
+          {
+            from: quizExpectedMove.from,
+            to: quizExpectedMove.to,
+            color: 'green',
+            label: 'Solution',
+            weight: 1,
+          },
+        ];
+      }
+      return [];
+    }
+
+    // Strictly force empty arrows during the bot's turn or while thinking
+    if (isBlindMode || isBotTurnOrThinking) return [];
     const list: BoardArrow[] = [];
 
     // 1. Lichess popular moves (Blue arrows)
@@ -114,19 +137,29 @@ export const Board: React.FC = () => {
       }
     }
 
-    // 2. Theoretical expected move (Green when user's turn, Amber when opponent's turn)
-    if (!isOutOfBook && expectedBookMoveUci) {
+    // 2. Theoretical expected move (Green on player's turn)
+    if (!isOutOfTargetLine && expectedBookMoveUci) {
       list.push({
         from: expectedBookMoveUci.from,
         to: expectedBookMoveUci.to,
-        color: turn === playerColor ? 'green' : 'amber',
+        color: 'green',
         label: 'Théorie',
         weight: 1,
       });
     }
 
     return list;
-  }, [isBlindMode, explorerStats, isOutOfBook, expectedBookMoveUci, turn, playerColor]);
+  }, [
+    trainingMode,
+    quizStatus,
+    quizShowSolution,
+    quizExpectedMove,
+    isBlindMode,
+    isBotTurnOrThinking,
+    explorerStats,
+    isOutOfTargetLine,
+    expectedBookMoveUci,
+  ]);
 
   const attemptMove = (from: string, to: string) => {
     if (!isUserTurn) return false;
@@ -212,12 +245,23 @@ export const Board: React.FC = () => {
               const legalTarget = legalTargetsMap.get(square);
               const isLastMove =
                 lastMoveSquares?.from === square || lastMoveSquares?.to === square;
+              const isQuizSolutionHighlight =
+                trainingMode === 'quiz' &&
+                quizStatus === 'wrong' &&
+                quizShowSolution &&
+                quizExpectedMove &&
+                (quizExpectedMove.from === square ||
+                  quizExpectedMove.to === square);
+
               const isBookHighlight =
-                !isBlindMode &&
-                !isOutOfBook &&
-                expectedBookMoveUci &&
-                (expectedBookMoveUci.from === square ||
-                  expectedBookMoveUci.to === square);
+                isQuizSolutionHighlight ||
+                (trainingMode === 'opening' &&
+                  !isBlindMode &&
+                  !isBotTurnOrThinking &&
+                  !isOutOfTargetLine &&
+                  expectedBookMoveUci &&
+                  (expectedBookMoveUci.from === square ||
+                    expectedBookMoveUci.to === square));
               const isKingCheck = kingInCheckSquare === square;
 
               const showRankCoord = colIdx === 0;
@@ -296,7 +340,7 @@ export const Board: React.FC = () => {
                     <div
                       draggable={isUserTurn && piece.color === playerColor}
                       onDragStart={(e) => handleDragStart(e, square, piece.color)}
-                      className="w-[84%] h-[84%] z-10 transition-transform duration-100 hover:scale-[1.04]"
+                      className="w-[84%] h-[84%] z-10 transition-all duration-150 ease-out hover:scale-[1.04]"
                     >
                       <ChessPieceSvg type={piece.type} color={piece.color} />
                     </div>
@@ -308,12 +352,13 @@ export const Board: React.FC = () => {
         </div>
 
         {/* SVG Overlay Layer for Arrows */}
-        {!isBlindMode && arrows.length > 0 && (
-          <svg
-            viewBox="0 0 800 800"
-            className="pointer-events-none absolute inset-0 w-full h-full z-20"
-            aria-label="Flèches d'analyse et de théorie"
-          >
+        <svg
+          viewBox="0 0 800 800"
+          className={`pointer-events-none absolute inset-0 w-full h-full z-20 transition-opacity duration-200 ease-out ${
+            arrows.length > 0 ? 'opacity-100' : 'opacity-0'
+          }`}
+          aria-label="Flèches d'analyse et de théorie"
+        >
             <defs>
               <marker
                 id="arrow-green"
@@ -440,7 +485,6 @@ export const Board: React.FC = () => {
               );
             })}
           </svg>
-        )}
 
         {/* Promotion Modal */}
         {pendingPromotion && (

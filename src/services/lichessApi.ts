@@ -1,16 +1,53 @@
 import type { DatabaseSource, LichessExplorerResponse } from '../types';
 
 const ENDPOINTS: Record<DatabaseSource, string> = {
-  masters: 'https://explorer.lichess.ovh/masters',
-  lichess: 'https://explorer.lichess.ovh/lichess',
+  masters: 'https://explorer.lichess.org/masters',
+  lichess: 'https://explorer.lichess.org/lichess',
 };
+
+const TOKEN_STORAGE_KEY = 'chess-trainer-lichess-token';
 
 const explorerCache = new Map<string, LichessExplorerResponse>();
 const pendingRequests = new Map<string, Promise<LichessExplorerResponse>>();
 
+export class LichessApiError extends Error {
+  status: number | null;
+  kind: 'auth_error' | 'offline';
+
+  constructor(
+    message: string,
+    kind: 'auth_error' | 'offline',
+    status: number | null = null
+  ) {
+    super(message);
+    this.name = 'LichessApiError';
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+export function getStoredLichessToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function setStoredLichessToken(token: string): void {
+  try {
+    const trimmed = token.trim();
+    if (trimmed) {
+      localStorage.setItem(TOKEN_STORAGE_KEY, trimmed);
+    } else {
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage quota / private mode errors
+  }
+}
+
 function buildCacheKey(fen: string, source: DatabaseSource): string {
-  // Normalize FEN to board + turn + castling + en-passant (first 4 fields)
-  // so transpositions or halfmove clock differences share cached explorer stats.
   const normalizedFen = fen.split(' ').slice(0, 4).join(' ');
   return `${source}::${normalizedFen}`;
 }
@@ -32,7 +69,8 @@ function buildUrl(fen: string, source: DatabaseSource): string {
 
 export async function fetchExplorerStats(
   fen: string,
-  source: DatabaseSource
+  source: DatabaseSource,
+  token?: string
 ): Promise<LichessExplorerResponse> {
   const key = buildCacheKey(fen, source);
 
@@ -47,19 +85,44 @@ export async function fetchExplorerStats(
   }
 
   const url = buildUrl(fen, source);
+  const effectiveToken = (token ?? getStoredLichessToken()).trim();
+  const headers: Record<string, string> = {};
+  if (effectiveToken) {
+    headers.Authorization = `Bearer ${effectiveToken}`;
+  }
 
-  // Simple GET request with no custom headers to avoid CORS preflight
-  const requestPromise = fetch(url, { method: 'GET' })
+  const requestPromise = fetch(url, {
+    method: 'GET',
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+  })
     .then(async (response) => {
       if (!response.ok) {
-        if (response.status === 429) {
-          throw new Error('Limite de requêtes Lichess atteinte (429). Veuillez patienter.');
+        if (response.status === 401 || response.status === 403 || response.status === 429) {
+          throw new LichessApiError(
+            `Erreur ${response.status} - Token requis ou limite atteinte`,
+            'auth_error',
+            response.status
+          );
         }
-        throw new Error(`Erreur API Lichess (${response.status})`);
+        throw new LichessApiError(
+          `Erreur API Lichess (${response.status})`,
+          'offline',
+          response.status
+        );
       }
       const data = (await response.json()) as LichessExplorerResponse;
       explorerCache.set(key, data);
       return data;
+    })
+    .catch((err) => {
+      if (err instanceof LichessApiError) {
+        throw err;
+      }
+      throw new LichessApiError(
+        'Hors-ligne : impossible de joindre explorer.lichess.org',
+        'offline',
+        null
+      );
     })
     .finally(() => {
       pendingRequests.delete(key);
@@ -86,12 +149,12 @@ export function getTotalGames(stats: {
 }
 
 /**
- * Picks a realistic opponent move based on Lichess Explorer frequency.
- * Weighted random selection among the top 3 legal moves in the explorer response.
+ * Picks the most popular or weighted realistic move from Lichess Explorer.
  */
 export function pickRealisticLichessMove(
   stats: LichessExplorerResponse | null,
-  legalSanMoves: string[]
+  legalSanMoves: string[],
+  preferMostPopular = false
 ): string | null {
   if (!stats || stats.moves.length === 0 || legalSanMoves.length === 0) {
     return null;
@@ -109,6 +172,10 @@ export function pickRealisticLichessMove(
 
   if (candidates.length === 0) {
     return null;
+  }
+
+  if (preferMostPopular) {
+    return candidates[0].san;
   }
 
   const totalWeight = candidates.reduce((acc, item) => acc + item.games, 0);
