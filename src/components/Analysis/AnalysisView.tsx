@@ -3,6 +3,7 @@ import { Chess } from 'chess.js';
 import {
   AlertCircle,
   ArrowRight,
+  ArrowUpDown,
   CheckCircle2,
   ChevronFirst,
   ChevronLast,
@@ -12,9 +13,11 @@ import {
   Cpu,
   Dumbbell,
   Eye,
+  FolderInput,
   GraduationCap,
   Loader2,
   RotateCcw,
+  Swords,
   Undo2,
   XCircle,
 } from 'lucide-react';
@@ -24,16 +27,23 @@ import {
   formatEvalScore,
   type AnalyzedGameResult,
 } from '../../services/stockfishAnalyzer';
-import { toFrenchSan } from '../../utils/tacticalExplainer';
 import {
   GameImporter,
   getStoredMyUsername,
   type ImportGameMetadata,
 } from './GameImporter';
-import { AnalysisBoard } from './AnalysisBoard';
+import { ChessBoard } from '../ChessBoard';
+import { EvalBar } from './EvalBar';
 import { EvalGraph } from './EvalGraph';
+import { PlayerBanner } from '../common/PlayerBanner';
+import {
+  computeMaterialAndCaptures,
+  INITIAL_FEN,
+  parseUci,
+} from '../../utils/chessHelpers';
 import type {
   AnalyzedMove,
+  BoardArrow,
   MoveClassification,
   PlayerColor,
   PositionEval,
@@ -41,7 +51,6 @@ import type {
 } from '../../types';
 
 const MY_USERNAME_STORAGE_KEY = 'chess-trainer-my-username';
-const INITIAL_FEN = new Chess().fen();
 
 interface SandboxStep {
   fen: string;
@@ -52,47 +61,69 @@ interface SandboxStep {
 
 const CLASSIFICATION_META: Record<
   MoveClassification,
-  { label: string; symbol: string; badgeClass: string }
+  {
+    label: string;
+    symbol: string;
+    badgeClass: string;
+    cardBorderClass: string;
+    dotClass: string;
+  }
 > = {
   book: {
     label: 'Théorie',
     symbol: '📖',
     badgeClass: 'bg-amber-900/45 text-amber-200 border-amber-600/55',
+    cardBorderClass: 'border-amber-500/45',
+    dotClass: 'bg-amber-400',
   },
   best: {
     label: 'Meilleur coup',
     symbol: '★',
     badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/45',
+    cardBorderClass: 'border-emerald-500/50',
+    dotClass: 'bg-emerald-400',
   },
   excellent: {
     label: 'Excellent coup',
     symbol: '!!',
     badgeClass: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/45',
+    cardBorderClass: 'border-cyan-500/45',
+    dotClass: 'bg-cyan-400',
   },
   good: {
     label: 'Bon coup',
     symbol: '✓',
     badgeClass: 'bg-teal-500/15 text-teal-300 border-teal-500/40',
+    cardBorderClass: 'border-teal-500/45',
+    dotClass: 'bg-teal-400',
   },
   inaccuracy: {
     label: 'Imprécision',
     symbol: '?!',
     badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/45',
+    cardBorderClass: 'border-amber-500/50',
+    dotClass: 'bg-yellow-400',
   },
   mistake: {
     label: 'Erreur',
     symbol: '?',
     badgeClass: 'bg-orange-500/20 text-orange-300 border-orange-500/45',
+    cardBorderClass: 'border-orange-500/55',
+    dotClass: 'bg-orange-400',
   },
   blunder: {
     label: 'Gaffe',
     symbol: '??',
     badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/45',
+    cardBorderClass: 'border-rose-500/60',
+    dotClass: 'bg-rose-500',
   },
   missed_win: {
     label: 'Gain manqué',
     symbol: '⚡',
     badgeClass: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/45',
+    cardBorderClass: 'border-amber-500/55',
+    dotClass: 'bg-amber-400',
   },
 };
 
@@ -102,6 +133,8 @@ export const AnalysisView: React.FC = () => {
     getStoredMyUsername()
   );
   const [userColor, setUserColor] = useState<PlayerColor>('w');
+  const [boardOrientation, setBoardOrientation] = useState<PlayerColor>('w');
+  const [showImporter, setShowImporter] = useState(true);
   const [playersMeta, setPlayersMeta] = useState<{
     whiteName: string;
     blackName: string;
@@ -109,6 +142,7 @@ export const AnalysisView: React.FC = () => {
   } | null>(null);
   const [analysis, setAnalysis] = useState<AnalyzedGameResult | null>(null);
   const [currentPly, setCurrentPly] = useState(0);
+  const activeMoveBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
@@ -146,12 +180,12 @@ export const AnalysisView: React.FC = () => {
     setCurrentPly(ply);
   };
 
-  // Keyboard navigation (ArrowLeft / ArrowRight)
+  // Keyboard navigation (ArrowLeft / ArrowRight / ArrowUp / ArrowDown)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (!analysis || isExerciseMode) return;
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
@@ -161,6 +195,14 @@ export const AnalysisView: React.FC = () => {
         e.preventDefault();
         setSandboxHistory([]);
         setCurrentPly((p) => Math.min(analysis.moves.length, p + 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSandboxHistory([]);
+        setCurrentPly(0);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSandboxHistory([]);
+        setCurrentPly(analysis.moves.length);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -211,6 +253,8 @@ export const AnalysisView: React.FC = () => {
     abortRef.current = controller;
 
     setUserColor(color);
+    setBoardOrientation(color);
+    setShowImporter(false);
     setPlayersMeta({
       whiteName: meta?.whiteName ?? 'Blancs',
       blackName: meta?.blackName ?? 'Noirs',
@@ -240,9 +284,11 @@ export const AnalysisView: React.FC = () => {
         if (hWhite && hWhite.toLowerCase() === cleanMy) {
           detected = 'w';
           setUserColor('w');
+          setBoardOrientation('w');
         } else if (hBlack && hBlack.toLowerCase() === cleanMy) {
           detected = 'b';
           setUserColor('b');
+          setBoardOrientation('b');
         }
       }
       if (hWhite || hBlack) {
@@ -310,7 +356,7 @@ export const AnalysisView: React.FC = () => {
     const newStep: SandboxStep = {
       fen: newFen,
       lastMove: { from: moveRes.from, to: moveRes.to },
-      san: toFrenchSan(moveRes.san),
+      san: moveRes.san,
       eval: null,
     };
 
@@ -496,34 +542,261 @@ export const AnalysisView: React.FC = () => {
       ? Math.round((progress.completed / progress.total) * 100)
       : 0;
 
+  useEffect(() => {
+    if (!isInSandbox && activeMoveBtnRef.current) {
+      activeMoveBtnRef.current.scrollIntoView({
+        block: 'nearest',
+        behavior: 'smooth',
+      });
+    }
+  }, [currentPly, isInSandbox]);
+
+  const material = useMemo(
+    () => computeMaterialAndCaptures(boardProps.fen),
+    [boardProps.fen]
+  );
+
+  const topColor: PlayerColor = boardOrientation === 'w' ? 'b' : 'w';
+  const bottomColor: PlayerColor = boardOrientation;
+
+  const getBannerProps = (side: PlayerColor) => {
+    const isWhite = side === 'w';
+    const name = isWhite
+      ? playersMeta?.whiteName ?? 'Blancs'
+      : playersMeta?.blackName ?? 'Noirs';
+    const rating = isWhite
+      ? analysis?.headers.WhiteElo
+      : analysis?.headers.BlackElo;
+    const capturedPieces = isWhite
+      ? material.capturedByWhite
+      : material.capturedByBlack;
+    const adv = isWhite
+      ? Math.max(0, material.whiteAdvantage)
+      : Math.max(0, -material.whiteAdvantage);
+    return {
+      name,
+      color: side,
+      rating,
+      isUser: playersMeta?.detectedSide === side,
+      capturedPieces,
+      materialAdvantage: adv,
+    };
+  };
+
+  const handleTestPunishment = () => {
+    if (!currentAnalyzedMove?.punishmentUci) return;
+    const parsed = parseUci(currentAnalyzedMove.punishmentUci);
+    if (!parsed) return;
+    void handleSandboxMove(parsed.from, parsed.to, parsed.promotion);
+  };
+
+  const canGoBack = Boolean(analysis && (currentPly > 0 || isInSandbox));
+  const canGoForward = Boolean(
+    analysis && !isInSandbox && currentPly < analysis.moves.length
+  );
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-      {/* Left Column: Importer & Depth Settings */}
-      <section className="lg:col-span-4 xl:col-span-3 space-y-4">
-        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-              <Cpu className="w-3.5 h-3.5 text-emerald-400" />
-              Moteur Stockfish WASM
-            </span>
-            <select
-              value={depth}
-              disabled={isAnalyzing}
-              onChange={(e) => setDepth(Number(e.target.value))}
-              className="px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-emerald-500"
-            >
-              <option value={12}>Profondeur 12 (Rapide)</option>
-              <option value={13}>Profondeur 13 (Équilibrée)</option>
-              <option value={14}>Profondeur 14 (Précise)</option>
-            </select>
+    <div className="flex flex-col lg:flex-row gap-5 lg:h-[calc(100vh-4.75rem)] lg:overflow-hidden">
+      {/* Left Column (~60-65%): Player Banners + EvalBar + Large ChessBoard + Media Controls */}
+      <section className="flex-1 min-w-0 flex flex-col items-center justify-center gap-2.5">
+        <div className="w-full max-w-[min(74vh,660px)] flex flex-col gap-2">
+          {/* Top Player Banner */}
+          <PlayerBanner {...getBannerProps(topColor)} />
+
+          {/* Sandbox Exploration Banner */}
+          {isInSandbox && (
+            <div className="rounded-xl p-2.5 bg-blue-500/15 border border-blue-500/45 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-blue-200">
+                <Compass className="w-4 h-4 text-blue-400 shrink-0" />
+                <span>
+                  Exploration ({sandboxHistory.map((s) => s.san).join(' ')})
+                </span>
+                {isEvaluatingSandbox && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-300" />
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSandboxHistory((prev) => prev.slice(0, -1))
+                  }
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+                >
+                  <Undo2 className="w-3 h-3" />
+                  Annuler
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSandboxHistory([])}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-blue-500 hover:bg-blue-400 text-slate-950"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  Revenir
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* EvalBar + Large ChessBoard */}
+          <div className="flex items-stretch gap-2.5 w-full">
+            <EvalBar
+              whiteWinPct={boardProps.whiteWinPct}
+              scoreLabel={boardProps.scoreLabel}
+              orientation={boardOrientation}
+            />
+            <div className="flex-1 min-w-0">
+              <ChessBoard
+                fen={boardProps.fen}
+                orientation={boardOrientation}
+                interactive={boardProps.interactive}
+                allowedColor="turn"
+                lastMove={boardProps.lastMove}
+                arrows={(() => {
+                  if (boardProps.hideArrows) return [];
+                  const list: BoardArrow[] = [];
+                  const best = parseUci(boardProps.bestMoveUci);
+                  if (best) {
+                    list.push({
+                      from: best.from,
+                      to: best.to,
+                      color: 'green',
+                      label: 'Meilleur',
+                    });
+                  }
+                  const punish = parseUci(boardProps.punishmentUci);
+                  if (punish) {
+                    list.push({
+                      from: punish.from,
+                      to: punish.to,
+                      color: 'red',
+                      label: 'Punition',
+                    });
+                  }
+                  return list;
+                })()}
+                moveBadges={boardProps.moveBadge ? [boardProps.moveBadge] : []}
+                size="lg"
+                maxWidthClass="max-w-none"
+                onMove={
+                  isExerciseMode ? handleExerciseAttempt : handleSandboxMove
+                }
+              />
+            </div>
+          </div>
+
+          {/* Bottom Player Banner */}
+          <PlayerBanner {...getBannerProps(bottomColor)} />
+
+          {/* Media Control Bar */}
+          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/60 shadow-sm">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => jumpToPlyClean(0)}
+                disabled={!canGoBack || isExerciseMode}
+                title="Début de partie (↑)"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-35 disabled:pointer-events-none text-slate-200 border border-slate-700 transition-colors"
+              >
+                <ChevronFirst className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => jumpToPlyClean(Math.max(0, currentPly - 1))}
+                disabled={!canGoBack || isExerciseMode}
+                title="Coup précédent (←)"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-35 disabled:pointer-events-none text-slate-200 border border-slate-700 transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  analysis &&
+                  jumpToPlyClean(Math.min(analysis.moves.length, currentPly + 1))
+                }
+                disabled={!canGoForward || isExerciseMode}
+                title="Coup suivant (→)"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-35 disabled:pointer-events-none text-slate-200 border border-slate-700 transition-colors"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  analysis && jumpToPlyClean(analysis.moves.length)
+                }
+                disabled={!canGoForward || isExerciseMode}
+                title="Fin de partie (↓)"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-35 disabled:pointer-events-none text-slate-200 border border-slate-700 transition-colors"
+              >
+                <ChevronLast className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {analysis && (
+                <span className="hidden sm:inline text-[11px] font-mono text-slate-400">
+                  Coup {currentPly}/{analysis.moves.length}
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  setBoardOrientation((o) => (o === 'w' ? 'b' : 'w'))
+                }
+                title="Retourner l'échiquier"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="hidden sm:inline">Retourner</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Right Column (~35-40%): EvalGraph + Coach Card + Scrollable Move List / Importer */}
+      <section className="w-full lg:w-[400px] xl:w-[440px] lg:min-w-[380px] lg:h-full flex flex-col gap-3 min-h-0">
+        {/* Engine + Import Toggle Header */}
+        <div className="bg-slate-900 border border-slate-700/60 rounded-2xl p-3 shadow-lg space-y-2.5 shrink-0">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Cpu className="w-4 h-4 text-emerald-400 shrink-0" />
+              <select
+                value={depth}
+                disabled={isAnalyzing}
+                onChange={(e) => setDepth(Number(e.target.value))}
+                className="px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded-lg text-slate-200 focus:outline-none focus:border-emerald-500"
+              >
+                <option value={12}>Stockfish Prof. 12</option>
+                <option value={13}>Stockfish Prof. 13</option>
+                <option value={14}>Stockfish Prof. 14</option>
+              </select>
+            </div>
+
+            {analysis && (
+              <button
+                type="button"
+                onClick={() => setShowImporter((s) => !s)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                  showImporter
+                    ? 'bg-emerald-500/20 text-emerald-200 border-emerald-500/40'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                }`}
+              >
+                <FolderInput className="w-3.5 h-3.5" />
+                {showImporter ? 'Voir l’analyse' : 'Importer une partie'}
+              </button>
+            )}
           </div>
 
           {isAnalyzing && (
-            <div className="space-y-1.5 pt-1">
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs text-emerald-300">
                 <span className="flex items-center gap-1.5 font-medium">
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Analyse en cours...
+                  Analyse Stockfish en cours...
                 </span>
                 <span className="font-mono">
                   {progress.completed}/{progress.total} ({progressPct}%)
@@ -546,412 +819,314 @@ export const AnalysisView: React.FC = () => {
           )}
         </div>
 
-        <GameImporter
-          isAnalyzing={isAnalyzing}
-          myUsername={myUsername}
-          onChangeMyUsername={handleChangeMyUsername}
-          onImportGame={handleImportGame}
-        />
-      </section>
-
-      {/* Center Column: Eval Bar + Board + Sandbox Banner + Navigation */}
-      <section className="lg:col-span-8 xl:col-span-5 flex flex-col items-center space-y-3">
-        <div className="w-full max-w-[590px] flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-900/90 border border-slate-800 text-xs">
-          {playersMeta ? (
-            <div className="flex items-center gap-2 min-w-0 truncate">
-              <span className="font-semibold text-slate-100 truncate">
-                {playersMeta.whiteName}
-              </span>
-              {playersMeta.detectedSide === 'w' && (
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold shrink-0">
-                  Vous
-                </span>
-              )}
-              <span className="text-slate-500">vs</span>
-              <span className="font-semibold text-slate-200 truncate">
-                {playersMeta.blackName}
-              </span>
-              {playersMeta.detectedSide === 'b' && (
-                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px] font-bold shrink-0">
-                  Vous
-                </span>
-              )}
-            </div>
-          ) : (
-            <span className="font-semibold text-slate-400">
-              Aucune partie chargée
-            </span>
-          )}
-          <span className="text-[11px] text-slate-400 shrink-0">
-            Orientation : {userColor === 'w' ? 'Blancs' : 'Noirs'}
-          </span>
-        </div>
-
-        {/* Sandbox Exploration Banner */}
-        {isInSandbox && (
-          <div className="w-full max-w-[590px] rounded-xl p-2.5 bg-blue-500/15 border border-blue-500/45 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs font-semibold text-blue-200">
-              <Compass className="w-4 h-4 text-blue-400 shrink-0" />
-              <span>
-                Mode Exploration libre (
-                {sandboxHistory.map((s) => s.san).join(' ')})
-              </span>
-              {isEvaluatingSandbox && (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-300" />
-              )}
-            </div>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() =>
-                  setSandboxHistory((prev) => prev.slice(0, -1))
-                }
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
-              >
-                <Undo2 className="w-3 h-3" />
-                Annuler le coup exploré
-              </button>
-              <button
-                type="button"
-                onClick={() => setSandboxHistory([])}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-blue-500 hover:bg-blue-400 text-slate-950"
-              >
-                <RotateCcw className="w-3 h-3" />
-                Revenir à la partie
-              </button>
-            </div>
+        {/* Importer Panel (shown initially or when toggled) */}
+        {(showImporter || !analysis) && (
+          <div className="flex-1 min-h-0 overflow-y-auto pr-0.5">
+            <GameImporter
+              isAnalyzing={isAnalyzing}
+              myUsername={myUsername}
+              onChangeMyUsername={handleChangeMyUsername}
+              onImportGame={handleImportGame}
+            />
           </div>
         )}
 
-        <AnalysisBoard
-          fen={boardProps.fen}
-          orientation={userColor}
-          whiteWinPct={boardProps.whiteWinPct}
-          scoreLabel={boardProps.scoreLabel}
-          lastMove={boardProps.lastMove}
-          bestMoveUci={boardProps.bestMoveUci}
-          punishmentUci={boardProps.punishmentUci}
-          moveBadge={boardProps.moveBadge}
-          hideArrows={boardProps.hideArrows}
-          interactive={boardProps.interactive}
-          onPlayMove={
-            isExerciseMode ? handleExerciseAttempt : handleSandboxMove
-          }
-        />
-
-        {/* Navigation / Legend */}
-        {analysis && !isExerciseMode && (
-          <div className="w-full max-w-[590px] flex flex-wrap items-center justify-between gap-2 px-3 py-2 rounded-xl bg-slate-900/80 border border-slate-800">
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => jumpToPlyClean(0)}
-                disabled={currentPly === 0 && !isInSandbox}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-35 text-slate-200 border border-slate-700"
-              >
-                <ChevronFirst className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => jumpToPlyClean(Math.max(0, currentPly - 1))}
-                disabled={currentPly === 0 && !isInSandbox}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-35 text-slate-200 border border-slate-700"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  jumpToPlyClean(Math.min(analysis.moves.length, currentPly + 1))
-                }
-                disabled={currentPly >= analysis.moves.length && !isInSandbox}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-35 text-slate-200 border border-slate-700"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => jumpToPlyClean(analysis.moves.length)}
-                disabled={currentPly >= analysis.moves.length && !isInSandbox}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-35 text-slate-200 border border-slate-700"
-              >
-                <ChevronLast className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="flex items-center gap-3 text-[11px] text-slate-400">
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                Meilleur coup
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-1.5 rounded-full bg-red-500 inline-block" />
-                Punition
-              </span>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Right Column: Coach Panel, Eval Curve & Moves */}
-      <section className="lg:col-span-12 xl:col-span-4 space-y-4">
-        {!analysis ? (
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 text-center space-y-2 shadow-xl">
-            <GraduationCap className="w-9 h-9 text-emerald-400 mx-auto" />
-            <h2 className="text-sm font-bold text-slate-100">
-              Coach Tactique Stockfish
-            </h2>
-            <p className="text-xs text-slate-400 leading-relaxed">
-              Importez une partie via votre pseudo Lichess ou collez un PGN à gauche pour obtenir une analyse complète coup par coup, ou manipulez directement l’échiquier en bac à sable.
-            </p>
-          </div>
-        ) : isExerciseMode && activeExerciseMove ? (
-          /* Interactive Retry Mistakes Mode */
-          <div className="bg-slate-900/90 border border-amber-500/45 rounded-2xl p-4 shadow-xl space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-300">
-                <Dumbbell className="w-4 h-4" />
-                Exercice : Corriger mes erreurs
-              </span>
-              <span className="text-xs font-mono text-slate-300">
-                {exerciseIdx + 1} / {errorMoves.length}
-              </span>
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5 text-xs">
-              {prevOppMoveForExercise ? (
-                <p className="text-slate-200">
-                  Les {prevOppMoveForExercise.color === 'w' ? 'Blancs' : 'Noirs'}{' '}
-                  viennent de jouer{' '}
-                  <strong className="font-mono text-amber-300">
-                    {prevOppMoveForExercise.color === 'b' ? '...' : ''}
-                    {prevOppMoveForExercise.frenchSan}
-                  </strong>
-                  . À vous de trouver le meilleur coup !
-                </p>
-              ) : (
-                <p className="text-slate-200">
-                  Début de partie : à vous de trouver le meilleur coup !
-                </p>
-              )}
-              <p className="text-[11px] text-slate-400">
-                Dans la partie, vous aviez joué{' '}
-                <span className="font-mono text-rose-300">
-                  {activeExerciseMove.frenchSan}
-                </span>{' '}
-                ({CLASSIFICATION_META[activeExerciseMove.classification].label.toLowerCase()}).
-              </p>
-            </div>
-
-            {exerciseStatus === 'wrong' && (
-              <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
-                <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                Ce n’est pas le meilleur coup, essayez encore !
-              </div>
-            )}
-
-            {exerciseStatus === 'solved' && (
-              <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/45 space-y-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-emerald-200">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                  Bravo ! Vous avez trouvé{' '}
-                  {activeExerciseMove.evalBefore.bestMoveSan
-                    ? toFrenchSan(activeExerciseMove.evalBefore.bestMoveSan)
-                    : ''}
+        {/* Analysis Content: EvalGraph + Coach Card + Scrollable Move List */}
+        {analysis && !showImporter && (
+          <>
+            {isExerciseMode && activeExerciseMove ? (
+              <div className="bg-slate-900 border border-amber-500/50 rounded-2xl p-4 shadow-xl space-y-3 shrink-0">
+                <div className="flex items-center justify-between">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-amber-300">
+                    <Dumbbell className="w-4 h-4" />
+                    Exercice : Corriger mes erreurs
+                  </span>
+                  <span className="text-xs font-mono text-slate-300">
+                    {exerciseIdx + 1} / {errorMoves.length}
+                  </span>
                 </div>
-                <p className="text-xs text-slate-200 leading-relaxed">
-                  {activeExerciseMove.coachExplanation}
-                </p>
-              </div>
-            )}
 
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setExerciseRevealSolution(true)}
-                disabled={exerciseRevealSolution}
-                className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-200 border border-slate-700"
-              >
-                <Eye className="w-3.5 h-3.5" />
-                Voir la solution
-              </button>
+                <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800 space-y-1.5 text-xs">
+                  {prevOppMoveForExercise ? (
+                    <p className="text-slate-200">
+                      Les {prevOppMoveForExercise.color === 'w' ? 'Blancs' : 'Noirs'}{' '}
+                      viennent de jouer{' '}
+                      <strong className="font-mono text-amber-300">
+                        {prevOppMoveForExercise.color === 'b' ? '...' : ''}
+                        {prevOppMoveForExercise.san}
+                      </strong>
+                      . À vous de trouver le meilleur coup !
+                    </p>
+                  ) : (
+                    <p className="text-slate-200">
+                      Début de partie : à vous de trouver le meilleur coup !
+                    </p>
+                  )}
+                  <p className="text-[11px] text-slate-400">
+                    Dans la partie, vous aviez joué{' '}
+                    <span className="font-mono text-rose-300">
+                      {activeExerciseMove.san}
+                    </span>{' '}
+                    ({CLASSIFICATION_META[activeExerciseMove.classification].label.toLowerCase()}).
+                  </p>
+                </div>
 
-              {exerciseIdx < errorMoves.length - 1 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setExerciseIdx((i) => i + 1);
-                    setExerciseStatus('awaiting');
-                    setExerciseRevealSolution(false);
-                  }}
-                  className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950"
-                >
-                  Erreur suivante
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              ) : (
+                {exerciseStatus === 'wrong' && (
+                  <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
+                    <XCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    Ce n’est pas le meilleur coup, essayez encore !
+                  </div>
+                )}
+
+                {exerciseStatus === 'solved' && (
+                  <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/45 space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-emerald-200">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      Bravo ! Vous avez trouvé{' '}
+                      {activeExerciseMove.evalBefore.bestMoveSan ?? ''}
+                    </div>
+                    <p className="text-xs text-slate-200 leading-relaxed">
+                      {activeExerciseMove.coachExplanation}
+                    </p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setExerciseRevealSolution(true)}
+                    disabled={exerciseRevealSolution}
+                    className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 disabled:opacity-45 text-slate-200 border border-slate-700"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Voir la solution
+                  </button>
+
+                  {exerciseIdx < errorMoves.length - 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExerciseIdx((i) => i + 1);
+                        setExerciseStatus('awaiting');
+                        setExerciseRevealSolution(false);
+                      }}
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950"
+                    >
+                      Erreur suivante
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setIsExerciseMode(false)}
+                      className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950"
+                    >
+                      Terminer
+                    </button>
+                  )}
+                </div>
+
                 <button
                   type="button"
                   onClick={() => setIsExerciseMode(false)}
-                  className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold bg-emerald-500 hover:bg-emerald-400 text-slate-950"
+                  className="w-full py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200"
                 >
-                  Terminer
+                  Revenir à la revue complète
                 </button>
-              )}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setIsExerciseMode(false)}
-              className="w-full py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200"
-            >
-              Revenir à la revue complète
-            </button>
-          </div>
-        ) : (
-          /* Normal Review Mode: Coach + Eval Curve + Moves */
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-4">
-            <EvalGraph
-              evals={analysis.evals}
-              moves={analysis.moves}
-              currentPly={currentPly}
-              onSelectPly={jumpToPlyClean}
-            />
-
-            {/* Coach Explanation Card */}
-            {isInSandbox && latestSandboxStep ? (
-              <div className="rounded-xl p-3.5 bg-blue-500/10 border border-blue-500/35 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-blue-200">
-                    Exploration : {latestSandboxStep.san}
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md font-mono text-xs font-bold bg-slate-900 text-slate-100 border border-slate-700">
-                    {latestSandboxStep.eval
-                      ? formatEvalScore(
-                          latestSandboxStep.eval.cp,
-                          latestSandboxStep.eval.mate
-                        )
-                      : 'Calcul...'}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-300">
-                  {latestSandboxStep.eval?.bestMoveSan
-                    ? `Meilleure réplique Stockfish : ${toFrenchSan(
-                        latestSandboxStep.eval.bestMoveSan
-                      )}.`
-                    : 'Évaluation Stockfish en cours...'}
-                </p>
-              </div>
-            ) : currentAnalyzedMove ? (
-              <div className="rounded-xl p-3.5 bg-slate-950/70 border border-slate-800 space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-bold text-slate-100">
-                      {currentAnalyzedMove.moveNumber}
-                      {currentAnalyzedMove.color === 'w' ? '. ' : '... '}
-                      {currentAnalyzedMove.frenchSan}
-                    </span>
-                    <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border ${
-                        CLASSIFICATION_META[currentAnalyzedMove.classification]
-                          .badgeClass
-                      }`}
-                    >
-                      <span>
-                        {
-                          CLASSIFICATION_META[currentAnalyzedMove.classification]
-                            .symbol
-                        }
-                      </span>
-                      <span>
-                        {
-                          CLASSIFICATION_META[currentAnalyzedMove.classification]
-                            .label
-                        }
-                      </span>
-                    </span>
-                  </div>
-
-                  <span className="px-2 py-0.5 rounded-md font-mono text-xs font-bold bg-slate-800 text-slate-100 border border-slate-700">
-                    {currentAnalyzedMove.scoreLabel}
-                  </span>
-                </div>
-
-                <div className="flex items-start gap-2 text-xs text-slate-200 leading-relaxed">
-                  <GraduationCap className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <p>{currentAnalyzedMove.coachExplanation}</p>
-                </div>
               </div>
             ) : (
-              <div className="rounded-xl p-3 bg-slate-950/60 border border-slate-800 text-xs text-slate-400">
-                Position initiale — utilisez les flèches du clavier, cliquez sur un coup ou jouez une variante sur l’échiquier.
-              </div>
-            )}
-
-            {/* Retry Mistakes CTA */}
-            {errorMoves.length > 0 && (
-              <button
-                type="button"
-                onClick={startExerciseMode}
-                className="w-full flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/20 transition-colors"
-              >
-                <Dumbbell className="w-4 h-4" />
-                Répéter les erreurs de cette partie ({errorMoves.length})
-              </button>
-            )}
-
-            {/* Analyzed Move List */}
-            <div className="max-h-56 overflow-y-auto rounded-xl bg-slate-950/60 border border-slate-800 p-2 space-y-1">
-              {movePairs.map((pair) => (
-                <div
-                  key={pair.num}
-                  className="grid grid-cols-[2.2rem_1fr_1fr] items-center gap-1 text-xs"
-                >
-                  <span className="font-mono text-slate-500 text-right pr-1.5">
-                    {pair.num}.
-                  </span>
-
-                  {pair.white ? (
-                    <button
-                      type="button"
-                      onClick={() => jumpToPlyClean(pair.white!.ply)}
-                      className={`flex items-center justify-between px-2 py-1 rounded-lg font-mono font-semibold transition-colors ${
-                        !isInSandbox && currentPly === pair.white.ply
-                          ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60'
-                          : 'text-slate-200 hover:bg-slate-800'
-                      }`}
-                    >
-                      <span>{pair.white.frenchSan}</span>
-                      <span className="text-[10px]">
-                        {CLASSIFICATION_META[pair.white.classification].symbol}
-                      </span>
-                    </button>
-                  ) : (
-                    <span />
-                  )}
-
-                  {pair.black ? (
-                    <button
-                      type="button"
-                      onClick={() => jumpToPlyClean(pair.black!.ply)}
-                      className={`flex items-center justify-between px-2 py-1 rounded-lg font-mono font-semibold transition-colors ${
-                        !isInSandbox && currentPly === pair.black.ply
-                          ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60'
-                          : 'text-slate-200 hover:bg-slate-800'
-                      }`}
-                    >
-                      <span>{pair.black.frenchSan}</span>
-                      <span className="text-[10px]">
-                        {CLASSIFICATION_META[pair.black.classification].symbol}
-                      </span>
-                    </button>
-                  ) : (
-                    <span />
-                  )}
+              <>
+                <div className="shrink-0">
+                  <EvalGraph
+                    evals={analysis.evals}
+                    moves={analysis.moves}
+                    currentPly={currentPly}
+                    onSelectPly={jumpToPlyClean}
+                  />
                 </div>
-              ))}
-            </div>
-          </div>
+
+                {/* Highlighted Coach Card */}
+                {isInSandbox && latestSandboxStep ? (
+                  <div className="rounded-2xl p-4 bg-slate-900 border border-blue-500/50 shadow-lg space-y-2 shrink-0">
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono text-sm font-bold text-blue-200">
+                        Exploration : {latestSandboxStep.san}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md font-mono text-xs font-bold bg-slate-800 text-slate-100 border border-slate-700">
+                        {latestSandboxStep.eval
+                          ? formatEvalScore(
+                              latestSandboxStep.eval.cp,
+                              latestSandboxStep.eval.mate
+                            )
+                          : 'Calcul...'}
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-200 leading-relaxed">
+                      {latestSandboxStep.eval?.bestMoveSan
+                        ? `Meilleure réplique Stockfish : ${latestSandboxStep.eval.bestMoveSan}.`
+                        : 'Évaluation Stockfish en cours...'}
+                    </p>
+                  </div>
+                ) : currentAnalyzedMove ? (
+                  <div
+                    className={`rounded-2xl p-4 bg-slate-900 border-2 shadow-lg space-y-3 shrink-0 ${
+                      CLASSIFICATION_META[currentAnalyzedMove.classification]
+                        .cardBorderClass
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <span className="font-mono text-base font-extrabold text-slate-100">
+                          {currentAnalyzedMove.moveNumber}
+                          {currentAnalyzedMove.color === 'w' ? '. ' : '... '}
+                          {currentAnalyzedMove.san}
+                        </span>
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                            CLASSIFICATION_META[
+                              currentAnalyzedMove.classification
+                            ].badgeClass
+                          }`}
+                        >
+                          <span>
+                            {
+                              CLASSIFICATION_META[
+                                currentAnalyzedMove.classification
+                              ].symbol
+                            }
+                          </span>
+                          <span>
+                            {
+                              CLASSIFICATION_META[
+                                currentAnalyzedMove.classification
+                              ].label
+                            }
+                          </span>
+                        </span>
+                      </div>
+
+                      <span className="px-2.5 py-1 rounded-lg font-mono text-xs font-bold bg-slate-950 text-slate-100 border border-slate-700 shrink-0">
+                        {currentAnalyzedMove.scoreLabel}
+                      </span>
+                    </div>
+
+                    <div className="flex items-start gap-2.5 text-sm text-slate-200 leading-relaxed">
+                      <GraduationCap className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                      <p>{currentAnalyzedMove.coachExplanation}</p>
+                    </div>
+
+                    {(currentAnalyzedMove.punishmentUci ||
+                      errorMoves.length > 0) && (
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {currentAnalyzedMove.punishmentUci && (
+                          <button
+                            type="button"
+                            onClick={handleTestPunishment}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-rose-500/15 hover:bg-rose-500/25 text-rose-200 border border-rose-500/40 transition-colors"
+                          >
+                            <Swords className="w-3.5 h-3.5" />
+                            Tester la punition
+                          </button>
+                        )}
+                        {errorMoves.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={startExerciseMode}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-sm transition-colors"
+                          >
+                            <Dumbbell className="w-3.5 h-3.5" />
+                            Répéter mes erreurs ({errorMoves.length})
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl p-4 bg-slate-900 border border-slate-700/60 text-sm text-slate-300 leading-relaxed shrink-0">
+                    Position initiale — utilisez les flèches du clavier, cliquez sur un coup ou jouez une variante sur l’échiquier.
+                  </div>
+                )}
+
+                {/* Scrollable 2-Column Move List */}
+                <div className="flex-1 min-h-0 bg-slate-900 border border-slate-700/60 rounded-2xl p-2.5 overflow-y-auto space-y-1">
+                  {movePairs.map((pair) => (
+                    <div
+                      key={pair.num}
+                      className="grid grid-cols-[2.25rem_1fr_1fr] items-center gap-1 text-xs"
+                    >
+                      <span className="font-mono text-slate-500 text-right pr-1.5">
+                        {pair.num}.
+                      </span>
+
+                      {pair.white ? (
+                        <button
+                          ref={
+                            !isInSandbox && currentPly === pair.white.ply
+                              ? activeMoveBtnRef
+                              : undefined
+                          }
+                          type="button"
+                          onClick={() => jumpToPlyClean(pair.white!.ply)}
+                          className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg font-mono font-semibold transition-colors ${
+                            !isInSandbox && currentPly === pair.white.ply
+                              ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60'
+                              : 'text-slate-200 hover:bg-slate-800'
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5 truncate">
+                            <span
+                              className={`w-2 h-2 rounded-full shrink-0 ${
+                                CLASSIFICATION_META[pair.white.classification]
+                                  .dotClass
+                              }`}
+                            />
+                            {pair.white.san}
+                          </span>
+                          <span className="text-[10px] opacity-85 ml-1">
+                            {CLASSIFICATION_META[pair.white.classification].symbol}
+                          </span>
+                        </button>
+                      ) : (
+                        <span />
+                      )}
+
+                      {pair.black ? (
+                        <button
+                          ref={
+                            !isInSandbox && currentPly === pair.black.ply
+                              ? activeMoveBtnRef
+                              : undefined
+                          }
+                          type="button"
+                          onClick={() => jumpToPlyClean(pair.black!.ply)}
+                          className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg font-mono font-semibold transition-colors ${
+                            !isInSandbox && currentPly === pair.black.ply
+                              ? 'bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-400/60'
+                              : 'text-slate-200 hover:bg-slate-800'
+                          }`}
+                        >
+                          <span className="flex items-center gap-1.5 truncate">
+                            <span
+                              className={`w-2 h-2 rounded-full shrink-0 ${
+                                CLASSIFICATION_META[pair.black.classification]
+                                  .dotClass
+                              }`}
+                            />
+                            {pair.black.san}
+                          </span>
+                          <span className="text-[10px] opacity-85 ml-1">
+                            {CLASSIFICATION_META[pair.black.classification].symbol}
+                          </span>
+                        </button>
+                      ) : (
+                        <span />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
         )}
       </section>
     </div>

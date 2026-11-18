@@ -88,7 +88,6 @@ export interface AnalyzedMove {
   moveNumber: number;
   color: PlayerColor;
   san: string;
-  frenchSan: string;
   uci: string;
   from: string;
   to: string;
@@ -152,9 +151,14 @@ export interface LichessExplorerResponse {
 export interface BoardArrow {
   from: string;
   to: string;
-  color: 'green' | 'amber' | 'blue';
+  color: 'green' | 'amber' | 'blue' | 'red';
   label?: string;
   weight?: number;
+}
+
+export interface BoardSquareHighlight {
+  square: string;
+  variant: 'book' | 'book-opponent' | 'solution' | 'check';
 }
 
 export interface SquarePair {

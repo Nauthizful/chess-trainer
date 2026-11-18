@@ -7,7 +7,6 @@ import type {
 } from '../types';
 import {
   generateTacticalExplanation,
-  toFrenchSan,
   uciToMove,
 } from '../utils/tacticalExplainer';
 
@@ -482,7 +481,6 @@ export async function analyzePgnGame(
       moveNumber,
       color: mv.color,
       san: mv.san,
-      frenchSan: toFrenchSan(mv.san),
       uci,
       from: mv.from,
       to: mv.to,

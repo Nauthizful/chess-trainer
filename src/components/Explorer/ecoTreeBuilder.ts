@@ -1,8 +1,13 @@
-import dagre from 'dagre';
 import { Chess } from 'chess.js';
 import { Position, type Edge } from '@xyflow/react';
 import type { OpeningFlowNode } from './OpeningMoveNode';
 import type { Opening, OpeningFamily, SquarePair } from '../../types';
+import { replaySanMoves } from '../../utils/chessHelpers';
+import {
+  formatMoveLabel,
+  formatMovesSequence,
+} from '../../utils/chessFormatting';
+import { layoutBottomToTop } from '../../utils/treeLayout';
 
 export const ECO_NODE_WIDTH = 196;
 export const ECO_NODE_HEIGHT = 72;
@@ -10,74 +15,17 @@ const LARGE_FAMILY_NODE_THRESHOLD = 60;
 const INITIAL_DEPTH_LIMIT = 8;
 const EXPAND_DEPTH_STEP = 4;
 
-export function formatMoveLabel(san: string, plyIndex: number): string {
-  const moveNumber = Math.floor((plyIndex - 1) / 2) + 1;
-  const isWhite = plyIndex % 2 === 1;
-  return isWhite ? `${moveNumber}. ${san}` : `${moveNumber}... ${san}`;
-}
-
-export function formatMovesSequence(moves: string[]): string {
-  if (moves.length === 0) return 'Position de départ';
-  return moves
-    .map((san, idx) =>
-      idx % 2 === 0 ? `${Math.floor(idx / 2) + 1}. ${san}` : san
-    )
-    .join(' ');
-}
-
 export function computePositionForMoves(movesPath: string[]): {
   fen: string;
   lastMove: SquarePair | null;
   movesLabel: string;
 } {
-  const chess = new Chess();
-  let lastMove: SquarePair | null = null;
-  for (const san of movesPath) {
-    try {
-      const res = chess.move(san);
-      lastMove = { from: res.from, to: res.to };
-    } catch {
-      break;
-    }
-  }
+  const { fen, lastMove } = replaySanMoves(movesPath);
   return {
-    fen: chess.fen(),
+    fen,
     lastMove,
     movesLabel: formatMovesSequence(movesPath),
   };
-}
-
-function layoutBottomToTop(
-  nodes: OpeningFlowNode[],
-  edges: Edge[]
-): { nodes: OpeningFlowNode[]; edges: Edge[] } {
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'BT', nodesep: 28, ranksep: 56 });
-
-  for (const node of nodes) {
-    g.setNode(node.id, { width: ECO_NODE_WIDTH, height: ECO_NODE_HEIGHT });
-  }
-  for (const edge of edges) {
-    g.setEdge(edge.source, edge.target);
-  }
-
-  dagre.layout(g);
-
-  const positionedNodes = nodes.map((node) => {
-    const pos = g.node(node.id);
-    return {
-      ...node,
-      sourcePosition: Position.Top,
-      targetPosition: Position.Bottom,
-      position: {
-        x: pos.x - ECO_NODE_WIDTH / 2,
-        y: pos.y - ECO_NODE_HEIGHT / 2,
-      },
-    };
-  });
-
-  return { nodes: positionedNodes, edges };
 }
 
 interface EcoTrieNode {
@@ -280,7 +228,10 @@ export function buildFamilyEcoTree(
   const visibleNodeIds = new Set(flowNodes.map((n) => n.id));
   const initialSelectedNodeId = visibleNodeIds.has(repTipId) ? repTipId : 'root';
 
-  const laidOut = layoutBottomToTop(flowNodes, flowEdges);
+  const laidOut = layoutBottomToTop(flowNodes, flowEdges, {
+    nodeWidth: ECO_NODE_WIDTH,
+    nodeHeight: ECO_NODE_HEIGHT,
+  });
   return {
     nodes: laidOut.nodes,
     edges: laidOut.edges,

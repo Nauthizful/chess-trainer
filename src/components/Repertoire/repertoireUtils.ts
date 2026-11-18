@@ -1,8 +1,10 @@
-import dagre from 'dagre';
 import { Chess } from 'chess.js';
 import { Position, type Edge } from '@xyflow/react';
 import type { RepertoireFlowNode } from './RepertoireMoveNode';
 import type { RepertoireNode, SquarePair, UserRepertoire } from '../../types';
+import { INITIAL_FEN, parseUci } from '../../utils/chessHelpers';
+import { formatMoveLabel } from '../../utils/chessFormatting';
+import { layoutBottomToTop } from '../../utils/treeLayout';
 
 const REPERTOIRE_STORAGE_KEY = 'chess-trainer-user-repertoire-v1';
 
@@ -12,7 +14,7 @@ export const REP_NODE_HEIGHT = 60;
 export function createRootRepertoireNode(): RepertoireNode {
   return {
     id: 'root',
-    fen: new Chess().fen(),
+    fen: INITIAL_FEN,
     san: '',
     uci: '',
     children: [],
@@ -181,10 +183,8 @@ export function findRepertoireNodeById(
     path: string[]
   ): { node: RepertoireNode; movesPath: string[]; lastMove: SquarePair | null } | null => {
     if (node.id === nodeId) {
-      const lastMove =
-        node.uci.length >= 4
-          ? { from: node.uci.slice(0, 2), to: node.uci.slice(2, 4) }
-          : null;
+      const parsed = parseUci(node.uci);
+      const lastMove = parsed ? { from: parsed.from, to: parsed.to } : null;
       return { node, movesPath: path, lastMove };
     }
     for (const child of node.children) {
@@ -194,6 +194,80 @@ export function findRepertoireNodeById(
     return null;
   };
   return dfs(root, []);
+}
+
+export function findParentRepertoireNodeId(
+  root: RepertoireNode,
+  targetId: string
+): string | null {
+  if (targetId === 'root') return null;
+  const dfs = (node: RepertoireNode): string | null => {
+    for (const child of node.children) {
+      if (child.id === targetId) return node.id;
+      const found = dfs(child);
+      if (found) return found;
+    }
+    return null;
+  };
+  return dfs(root);
+}
+
+export function parsePgnOrMovesLine(rawInput: string): {
+  moves: string[];
+  error?: string;
+} {
+  const trimmed = rawInput.trim();
+  if (!trimmed) {
+    return { moves: [], error: 'Veuillez coller une suite de coups ou un PGN.' };
+  }
+
+  try {
+    const chess = new Chess();
+    chess.loadPgn(trimmed);
+    const history = chess.history();
+    if (history.length > 0) {
+      return { moves: history };
+    }
+  } catch {
+    // Fallback to token-by-token SAN parsing below
+  }
+
+  const cleaned = trimmed
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\{[^}]*\}/g, ' ')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\$\d+/g, ' ')
+    .replace(/\b\d+\.+/g, ' ')
+    .replace(/\b(1-0|0-1|1\/2-1\/2|\*)\b/g, ' ');
+
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+  const board = new Chess();
+  const moves: string[] = [];
+
+  for (const token of tokens) {
+    try {
+      const res = board.move(token);
+      if (res) {
+        moves.push(res.san);
+      } else {
+        return {
+          moves: [],
+          error: `Coup invalide ou illégal détecté : "${token}"`,
+        };
+      }
+    } catch {
+      return {
+        moves: [],
+        error: `Coup invalide ou illégal détecté : "${token}"`,
+      };
+    }
+  }
+
+  if (moves.length === 0) {
+    return { moves: [], error: 'Aucun coup valide trouvé dans le texte.' };
+  }
+
+  return { moves };
 }
 
 /**
@@ -229,13 +303,10 @@ export function buildRepertoireFlowGraph(
   ) => {
     const ply = path.length;
     const isStart = ply === 0;
-    const moveNumber = Math.floor((ply - 1) / 2) + 1;
     const isWhiteMove = ply % 2 === 1;
     const label = isStart
       ? `Départ (${sideLabel})`
-      : isWhiteMove
-      ? `${moveNumber}. ${node.san}`
-      : `${moveNumber}... ${node.san}`;
+      : formatMoveLabel(node.san, ply);
 
     rawNodes.push({
       id: node.id,
@@ -272,29 +343,8 @@ export function buildRepertoireFlowGraph(
 
   walk(root, null, []);
 
-  const g = new dagre.graphlib.Graph();
-  g.setDefaultEdgeLabel(() => ({}));
-  g.setGraph({ rankdir: 'BT', nodesep: 28, ranksep: 56 });
-
-  for (const n of rawNodes) {
-    g.setNode(n.id, { width: REP_NODE_WIDTH, height: REP_NODE_HEIGHT });
-  }
-  for (const e of rawEdges) {
-    g.setEdge(e.source, e.target);
-  }
-
-  dagre.layout(g);
-
-  const positionedNodes = rawNodes.map((n) => {
-    const pos = g.node(n.id);
-    return {
-      ...n,
-      position: {
-        x: pos.x - REP_NODE_WIDTH / 2,
-        y: pos.y - REP_NODE_HEIGHT / 2,
-      },
-    };
+  return layoutBottomToTop(rawNodes, rawEdges, {
+    nodeWidth: REP_NODE_WIDTH,
+    nodeHeight: REP_NODE_HEIGHT,
   });
-
-  return { nodes: positionedNodes, edges: rawEdges };
 }

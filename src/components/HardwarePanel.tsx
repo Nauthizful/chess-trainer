@@ -9,14 +9,12 @@ import {
 } from 'lucide-react';
 import { useChessStore } from '../store/useChessStore';
 import type { VirtualHardwareSnapshot } from '../drivers/VirtualHardwareDriver';
+import { FILES, RANKS } from '../utils/chessHelpers';
 
 interface HardwarePanelProps {
   isOpen: boolean;
   onClose: () => void;
 }
-
-const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
-const RANKS = ['8', '7', '6', '5', '4', '3', '2', '1'] as const;
 
 export const HardwarePanel: React.FC<HardwarePanelProps> = ({
   isOpen,

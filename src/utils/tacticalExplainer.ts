@@ -1,7 +1,7 @@
 import { Chess, type Color, type PieceSymbol } from 'chess.js';
 import type { MoveClassification, PositionEval } from '../types';
-
-const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'] as const;
+import { FILES, parseUci } from './chessHelpers';
+import { formatMoveLabel } from './chessFormatting';
 
 const PIECE_FR: Record<PieceSymbol, string> = {
   p: 'pion',
@@ -21,18 +21,6 @@ const PIECE_VALUE: Record<PieceSymbol, number> = {
   k: 100,
 };
 
-const FR_PIECE_MAP: Record<string, string> = {
-  N: 'C',
-  B: 'F',
-  R: 'T',
-  Q: 'D',
-  K: 'R',
-};
-
-export function toFrenchSan(san: string): string {
-  return san.replace(/[NBRQK]/g, (ch) => FR_PIECE_MAP[ch] ?? ch);
-}
-
 export function pieceNameFr(piece: PieceSymbol): string {
   return PIECE_FR[piece];
 }
@@ -41,18 +29,16 @@ export function uciToMove(
   chess: Chess,
   uci: string
 ): ReturnType<Chess['move']> | null {
-  if (!uci || uci.length < 4) return null;
-  const from = uci.slice(0, 2);
-  const to = uci.slice(2, 4);
-  const promotion = uci.length > 4 ? uci[4] : undefined;
+  const parsed = parseUci(uci);
+  if (!parsed) return null;
   try {
-    return chess.move({ from, to, promotion });
+    return chess.move(parsed);
   } catch {
     return null;
   }
 }
 
-export function pvUciToFrenchSan(
+export function pvUciToSan(
   fen: string,
   pvUci: string[],
   startPly: number,
@@ -66,14 +52,10 @@ export function pvUciToFrenchSan(
     const moveRes = uciToMove(board, pvUci[i]);
     if (!moveRes) break;
     const ply = startPly + i;
-    const moveNumber = Math.floor((ply - 1) / 2) + 1;
-    const frSan = toFrenchSan(moveRes.san);
-    if (moveRes.color === 'w') {
-      parts.push(`${moveNumber}. ${frSan}`);
-    } else if (i === 0) {
-      parts.push(`${moveNumber}... ${frSan}`);
+    if (i === 0 || moveRes.color === 'w') {
+      parts.push(formatMoveLabel(moveRes.san, ply));
     } else {
-      parts.push(frSan);
+      parts.push(moveRes.san);
     }
   }
 
@@ -253,7 +235,7 @@ export function generateTacticalExplanation(input: TacticalExplainInput): string
     bookOpening,
   } = input;
 
-  const frPlayed = toFrenchSan(playedSan);
+  const frPlayed = playedSan;
   const opponentColor: Color = playedColor === 'w' ? 'b' : 'w';
   const reasons: string[] = [];
 
@@ -294,7 +276,7 @@ export function generateTacticalExplanation(input: TacticalExplainInput): string
       );
     }
 
-    const bestLine = pvUciToFrenchSan(fenBefore, evalBefore.pvUci, ply, 3);
+    const bestLine = pvUciToSan(fenBefore, evalBefore.pvUci, ply, 3);
     if (bestLine && classification !== 'best') {
       reasons.push(`Stockfish préférait légèrement : ${bestLine}.`);
     } else if (bestLine) {
@@ -350,11 +332,11 @@ export function generateTacticalExplanation(input: TacticalExplainInput): string
 
     if (defenders.length === 0) {
       reasons.push(
-        `Votre ${targetName} en ${oppReply.to} est laissé sans défense et peut être capturé gratuitement par ${toFrenchSan(oppReply.san)}.`
+        `Votre ${targetName} en ${oppReply.to} est laissé sans défense et peut être capturé gratuitement par ${oppReply.san}.`
       );
     } else if (victimVal > attackerVal) {
       reasons.push(
-        `Votre ${targetName} en ${oppReply.to} se retrouve en prise face à une pièce de moindre valeur (${oppPieceName}) après ${toFrenchSan(oppReply.san)}.`
+        `Votre ${targetName} en ${oppReply.to} se retrouve en prise face à une pièce de moindre valeur (${oppPieceName}) après ${oppReply.san}.`
       );
     }
   } else {
@@ -397,7 +379,7 @@ export function generateTacticalExplanation(input: TacticalExplainInput): string
       const t1 = forkedTargets[0];
       const t2 = forkedTargets[1];
       reasons.push(
-        `La réplique ${toFrenchSan(oppReply.san)} crée une attaque double (fourchette) visant simultanément votre ${pieceNameFr(t1.type)} en ${t1.sq} et votre ${pieceNameFr(t2.type)} en ${t2.sq}.`
+        `La réplique ${oppReply.san} crée une attaque double (fourchette) visant simultanément votre ${pieceNameFr(t1.type)} en ${t1.sq} et votre ${pieceNameFr(t2.type)} en ${t2.sq}.`
       );
     }
   }
@@ -410,11 +392,11 @@ export function generateTacticalExplanation(input: TacticalExplainInput): string
       const victimName = pieceNameFr(bestMove.captured);
       if (classification === 'missed_win') {
         reasons.push(
-          `Gain matériel manqué : vous pouviez exploiter l’imprécision adverse pour capturer le ${victimName} en ${bestMove.to} avec ${toFrenchSan(bestMove.san)}.`
+          `Gain matériel manqué : vous pouviez exploiter l’imprécision adverse pour capturer le ${victimName} en ${bestMove.to} avec ${bestMove.san}.`
         );
       } else if (PIECE_VALUE[bestMove.captured] >= PIECE_VALUE[bestMove.piece]) {
         reasons.push(
-          `Vous avez manqué la capture avantageuse du ${victimName} en ${bestMove.to} par ${toFrenchSan(bestMove.san)}.`
+          `Vous avez manqué la capture avantageuse du ${victimName} en ${bestMove.to} par ${bestMove.san}.`
         );
       }
     } else if (classification === 'missed_win') {
@@ -467,16 +449,14 @@ export function generateTacticalExplanation(input: TacticalExplainInput): string
   }
 
   // Mandatory conclusion: best move recommended by Stockfish + 2-3 half-moves PV
-  const bestFr = evalBefore.bestMoveSan
-    ? toFrenchSan(evalBefore.bestMoveSan)
-    : '';
-  const pvFr = pvUciToFrenchSan(fenBefore, evalBefore.pvUci, ply, 3);
-  if (bestFr && pvFr) {
+  const bestSan = evalBefore.bestMoveSan ?? '';
+  const pvSan = pvUciToSan(fenBefore, evalBefore.pvUci, ply, 3);
+  if (bestSan && pvSan) {
     reasons.push(
-      `Meilleur coup recommandé : ${bestFr} (suite : ${pvFr}).`
+      `Meilleur coup recommandé : ${bestSan} (suite : ${pvSan}).`
     );
-  } else if (bestFr) {
-    reasons.push(`Meilleur coup recommandé : ${bestFr}.`);
+  } else if (bestSan) {
+    reasons.push(`Meilleur coup recommandé : ${bestSan}.`);
   }
 
   return reasons.join(' ');

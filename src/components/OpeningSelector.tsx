@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { OPENINGS } from '../data/openings';
 import { useChessStore } from '../store/useChessStore';
+import { SideSwitcher } from './common/SideSwitcher';
 import type { Opening, OpeningCategory } from '../types';
 
 const CATEGORIES: Array<'Toutes' | OpeningCategory> = [
@@ -75,32 +76,7 @@ export const OpeningSelector: React.FC = () => {
             Votre camp (Rôle inversé)
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={() => setPlayerColor('w')}
-            className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-sm font-semibold border transition-all ${
-              playerColor === 'w'
-                ? 'bg-slate-100 text-slate-950 border-white shadow-md shadow-white/10'
-                : 'bg-slate-800/70 text-slate-300 border-slate-700 hover:bg-slate-800 hover:text-white'
-            }`}
-          >
-            <span className="w-3.5 h-3.5 rounded-full bg-white border border-slate-400 inline-block" />
-            Blancs
-          </button>
-          <button
-            type="button"
-            onClick={() => setPlayerColor('b')}
-            className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-xl text-sm font-semibold border transition-all ${
-              playerColor === 'b'
-                ? 'bg-slate-800 text-white border-emerald-400 shadow-md shadow-emerald-500/15 ring-1 ring-emerald-400/40'
-                : 'bg-slate-800/70 text-slate-300 border-slate-700 hover:bg-slate-800 hover:text-white'
-            }`}
-          >
-            <span className="w-3.5 h-3.5 rounded-full bg-slate-950 border border-slate-400 inline-block" />
-            Noirs
-          </button>
-        </div>
+        <SideSwitcher value={playerColor} onChange={setPlayerColor} size="md" />
         <p className="mt-2 text-[11px] text-slate-400 leading-relaxed">
           L’ordinateur joue les coups{' '}
           <span className="text-slate-200 font-medium">

@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { BookmarkPlus, Check, Search } from 'lucide-react';
 import { filterOpeningFamilies } from '../../data/openings';
 import { useChessStore } from '../../store/useChessStore';
-import { MiniBoard } from './MiniBoard';
+import { ChessBoard } from '../ChessBoard';
 import type { PlayerColor } from '../../types';
 
 export const OpeningFilterPanel: React.FC = () => {
@@ -51,7 +51,7 @@ export const OpeningFilterPanel: React.FC = () => {
   }, [explorerSearchQuery, explorerCampFilter]);
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col gap-4 h-full">
+    <div className="bg-slate-900 border border-slate-700/60 rounded-2xl p-4 shadow-xl flex flex-col gap-4 h-full">
       {/* Read-only Enlarged Preview Chessboard */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
@@ -63,9 +63,10 @@ export const OpeningFilterPanel: React.FC = () => {
           </span>
         </div>
 
-        <MiniBoard
+        <ChessBoard
           fen={explorerPreviewFen}
           lastMove={explorerPreviewLastMove}
+          size="md"
         />
 
         <p className="text-[11px] font-mono text-emerald-300/90 bg-slate-950/60 border border-slate-800 rounded-lg px-2.5 py-1.5 truncate">
